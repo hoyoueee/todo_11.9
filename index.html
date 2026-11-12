@@ -1,0 +1,1778 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>YOCO 张量流与共享 KV 机制 · Technical Note</title>
+<style>
+  :root{
+    --ink:#17222d;
+    --ink2:#3d4b59;
+    --muted:#6b7785;
+    --line:#d9e1e8;
+    --soft:#f4f7f9;
+    --paper:#ffffff;
+    --accent:#2d6b5f;
+    --accent-soft:#e8f1ee;
+    --amber:#9b5f1f;
+    --amber-soft:#fbf2e7;
+    --red:#a33b32;
+    --red-soft:#fbeceb;
+    --mono:"SFMono-Regular",Consolas,"Liberation Mono",Menlo,monospace;
+    --sans:"Noto Sans SC","Microsoft YaHei","PingFang SC",sans-serif;
+    --serif:"Times New Roman","Noto Serif CJK SC","Songti SC",serif;
+  }
+  *{box-sizing:border-box}
+  html{scroll-behavior:smooth}
+  body{
+    margin:0;background:var(--soft);color:var(--ink);
+    font-family:var(--sans);font-size:16px;line-height:1.8;
+    -webkit-font-smoothing:antialiased;
+  }
+  a{color:var(--accent);text-decoration:none}
+  a:hover{text-decoration:underline}
+  ::selection{background:#dce9e5}
+
+  .page{max-width:1120px;margin:0 auto;padding:52px 28px 72px}
+
+  .report-header{
+    border-bottom:1px solid var(--line);
+    padding-bottom:26px;margin-bottom:24px;
+  }
+  .eyebrow{
+    color:var(--accent);font-family:var(--mono);font-size:11px;
+    letter-spacing:.12em;text-transform:uppercase;margin-bottom:12px;
+  }
+  h1{
+    margin:0;font-family:var(--sans);font-size:38px;line-height:1.28;
+    letter-spacing:-.02em;font-weight:650;color:var(--ink);
+  }
+  .subtitle{
+    margin:12px 0 0;color:var(--ink2);font-size:17px;line-height:1.75;
+    max-width:900px;
+  }
+  .meta{
+    margin-top:16px;color:var(--muted);font-size:12.5px;
+    font-family:var(--mono);line-height:1.7;
+  }
+
+  section{
+    background:var(--paper);border:1px solid var(--line);
+    border-radius:7px;padding:30px 34px;margin-bottom:22px;
+  }
+  .section-head{
+    display:flex;align-items:baseline;gap:13px;
+    border-bottom:1px solid var(--line);
+    padding-bottom:12px;margin-bottom:22px;
+  }
+  .section-head .snum{
+    color:var(--accent);font-family:var(--mono);font-size:11px;
+    letter-spacing:.06em;white-space:nowrap;
+  }
+  h2{
+    margin:0;font-family:var(--sans);font-size:24px;line-height:1.35;
+    font-weight:650;letter-spacing:-.01em;
+  }
+  h3{
+    margin:27px 0 9px;font-family:var(--sans);font-size:18px;
+    line-height:1.45;font-weight:650;
+  }
+  h3:first-of-type{margin-top:4px}
+  h4{
+    margin:18px 0 6px;font-family:var(--sans);font-size:14px;
+    font-weight:650;color:var(--ink2);
+  }
+  p{margin:0 0 12px;color:var(--ink2)}
+  p:last-child{margin-bottom:0}
+  .lead{color:var(--ink2);font-size:16.5px;line-height:1.85;max-width:940px}
+  .muted{color:var(--muted)}
+  .small{font-size:12.5px}
+  .mono{font-family:var(--mono)}
+  .nowrap{white-space:nowrap}
+
+  .callout{
+    border-left:3px solid var(--accent);background:var(--accent-soft);
+    border-radius:0 4px 4px 0;padding:12px 15px;margin:14px 0;
+    color:var(--ink2);font-size:14.5px;line-height:1.75;
+  }
+  .callout.amber{border-left-color:var(--amber);background:var(--amber-soft)}
+  .callout.rose{border-left-color:var(--red);background:var(--red-soft)}
+  .callout .label{
+    display:block;margin-bottom:3px;font-family:var(--mono);
+    font-size:10px;letter-spacing:.1em;text-transform:uppercase;
+    color:var(--accent);
+  }
+  .callout.amber .label{color:var(--amber)}
+  .callout.rose .label{color:var(--red)}
+  .callout p:last-child{margin-bottom:0}
+  .callout b,.callout strong{color:var(--ink)}
+
+  .grid-2{display:grid;grid-template-columns:1fr 1fr;gap:14px}
+  .grid-3{display:grid;grid-template-columns:repeat(3,1fr);gap:12px}
+  .card{
+    border:1px solid var(--line);border-radius:5px;
+    padding:15px 17px;background:#fbfcfd;
+  }
+  .card .k{
+    color:var(--muted);font-size:11px;font-family:var(--mono);
+    letter-spacing:.02em;margin-bottom:4px;
+  }
+  .card h4{margin:0 0 4px;color:var(--ink);font-size:15.5px}
+  .card p{font-size:14px;line-height:1.72;margin:0;color:var(--ink2)}
+
+  .stats{
+    display:grid;grid-template-columns:repeat(4,1fr);gap:11px;margin:16px 0;
+  }
+  .stat{
+    border:1px solid var(--line);border-radius:5px;
+    padding:12px 14px;background:#fbfcfd;
+  }
+  .stat .n{font-family:var(--mono);font-size:21px;color:var(--ink);line-height:1.3}
+  .stat .l{color:var(--muted);font-size:11.5px;margin-top:2px}
+
+  .tensor{
+    font-family:var(--mono);font-size:.86em;background:#f2f5f7;
+    border:1px solid #e2e8ed;border-radius:3px;padding:1px 4px;
+    color:#263846;white-space:nowrap;
+  }
+
+  .math-block{
+    border:1px solid var(--line);border-left:3px solid var(--ink);
+    background:#fbfcfd;border-radius:0 5px 5px 0;
+    padding:13px 16px;margin:14px 0;overflow:auto;
+    font-family:var(--serif);font-size:16px;line-height:1.9;
+    color:var(--ink);
+  }
+  .math-block .eq{display:flex;flex-wrap:wrap;gap:8px 24px;align-items:baseline}
+  .math-block .eq span{white-space:nowrap}
+  .math-block small{
+    display:block;font-family:var(--sans);font-size:12px;
+    color:var(--muted);margin-top:5px;line-height:1.65;
+  }
+
+  .flow{
+    display:flex;align-items:stretch;gap:0;flex-wrap:wrap;
+    margin:15px 0 4px;padding:14px;
+    background:#fbfcfd;border:1px solid var(--line);border-radius:5px;
+  }
+  .flow-node{
+    flex:1 1 118px;min-width:104px;padding:9px 10px;
+    border:1px solid var(--line);border-radius:4px;background:#fff;
+    text-align:center;
+  }
+  .flow-node .t{font-size:11px;color:var(--muted);margin-bottom:2px}
+  .flow-node .v{font-family:var(--mono);font-size:11.5px;color:var(--ink);line-height:1.5}
+  .flow-node.accent{border-color:#b9d2c9;background:var(--accent-soft)}
+  .flow-node.accent .v{color:#244e45}
+  .flow-node.amber{border-color:#dfc5a8;background:var(--amber-soft)}
+  .flow-node.amber .v{color:#6f4514}
+  .flow-arrow{
+    align-self:center;padding:0 6px;color:var(--muted);
+    font-family:var(--mono);font-size:13px;flex:0 0 auto;
+  }
+  .fig-caption{
+    margin:4px 0 14px;color:var(--muted);font-size:12px;
+    line-height:1.65;
+  }
+  .fig-caption strong{color:var(--ink);font-weight:600}
+
+  .owner{display:grid;grid-template-columns:1.05fr .95fr;gap:14px;margin:15px 0}
+  .owner-box{border:1px solid var(--line);border-radius:5px;background:#fbfcfd;padding:13px 15px}
+  .owner-box h4{margin:0 0 6px}
+  .owner-row{
+    display:flex;justify-content:space-between;gap:14px;
+    border-bottom:1px dashed var(--line);padding:5px 0;font-size:13.5px;
+  }
+  .owner-row:last-child{border-bottom:0}
+  .owner-row .a{color:var(--muted)}
+  .owner-row .b{font-family:var(--mono);font-size:12px;color:var(--ink);text-align:right}
+
+  .table-wrap{
+    overflow:auto;border:1px solid var(--line);border-radius:5px;
+    background:#fff;margin:10px 0 12px;
+  }
+  table{width:100%;border-collapse:collapse;font-size:13.5px;line-height:1.65}
+  th,td{
+    padding:9px 11px;text-align:left;vertical-align:top;
+    border-bottom:1px solid var(--line);
+  }
+  th{
+    background:#f7f9fa;color:var(--ink2);font-size:12px;
+    font-weight:600;white-space:nowrap;
+  }
+  tr:last-child td{border-bottom:0}
+  td.mono,th.mono{font-family:var(--mono);font-size:12px}
+  td.num{font-family:var(--mono);font-size:12px;white-space:nowrap}
+  .ok{color:var(--accent);font-weight:600}
+  .warn{color:var(--amber);font-weight:600}
+  .bad{color:var(--red);font-weight:600}
+
+  details{
+    border:1px solid var(--line);border-radius:5px;
+    background:#fbfcfd;margin:12px 0;overflow:hidden;
+  }
+  details.source-appendix{border-color:#b9d2c9;border-left:3px solid var(--accent)}
+  details.source-appendix summary{background:#f4f8f6}
+  details.source-appendix .details-body{background:#fbfcfd}
+  details+details{margin-top:8px}
+  summary{
+    cursor:pointer;list-style:none;padding:9px 13px;
+    display:flex;align-items:center;gap:8px;
+    font-size:13px;color:var(--ink2);background:#fbfcfd;
+  }
+  summary::-webkit-details-marker{display:none}
+  summary:before{
+    content:"+";display:inline-flex;align-items:center;justify-content:center;
+    width:16px;height:16px;border:1px solid var(--line);
+    border-radius:3px;background:#fff;color:var(--accent);
+    font-family:var(--mono);font-size:11px;flex:0 0 auto;
+  }
+  details[open] summary:before{content:"−"}
+  details[open] summary{border-bottom:1px solid var(--line);color:var(--ink)}
+  summary .tag{
+    margin-left:auto;color:var(--muted);font-family:var(--mono);
+    font-size:9.5px;letter-spacing:.05em;text-transform:uppercase;
+  }
+  .details-body{padding:13px 15px 14px;background:#fff}
+  .details-body p:first-child{margin-top:0}
+  .details-body p:last-child{margin-bottom:0}
+
+  pre{
+    margin:10px 0;padding:14px 16px;overflow:auto;
+    background:#0d151d;color:#f4f8fc;border:1px solid #2c3947;border-radius:4px;
+    font-family:var(--mono);font-size:12.4px;line-height:1.75;tab-size:2;
+    font-weight:450;letter-spacing:.005em;
+    -webkit-font-smoothing:auto;text-rendering:optimizeLegibility;
+  }
+  pre code{font-family:inherit;color:inherit}
+  pre .c{color:#b9c9d8;font-style:italic}
+  pre .k{color:#8fe0d0;font-weight:600}
+  pre .s{color:#f2cf8b}
+  pre .n{color:#e3c8f5}
+  .code-label{
+    display:flex;justify-content:space-between;align-items:center;gap:10px;
+    margin:12px 0 -4px;font-family:var(--mono);font-size:10.5px;
+    color:var(--muted);
+  }
+  .code-label .file{color:var(--accent)}
+
+  .table-caption{
+    margin:12px 0 4px;color:var(--ink2);font-size:12px;
+    line-height:1.6;
+  }
+  .table-caption strong{color:var(--ink);font-weight:600}
+  .note-list{margin:8px 0 0;padding-left:20px}
+  .note-list li{margin:5px 0;color:var(--ink2);font-size:14px}
+  .note-list li strong{color:var(--ink)}
+  .kbd{
+    font-family:var(--mono);font-size:.86em;border:1px solid var(--line);
+    border-radius:3px;padding:1px 4px;background:#f7f9fa;
+  }
+  .footer{
+    max-width:1120px;margin:0 auto;padding:18px 28px 42px;
+    border-top:1px solid var(--line);color:var(--muted);
+    font-size:11px;display:flex;justify-content:space-between;gap:18px;flex-wrap:wrap;
+  }
+  .top-link,.progress{display:none!important}
+
+  .architecture-overview .section-head .snum{
+    font-size:9px;letter-spacing:.12em;
+  }
+  .arch-figure{margin:14px 0 2px}
+  .svg-scroll{
+    overflow-x:auto;border:1px solid var(--line);border-radius:6px;
+    background:#fbfcfd;padding:10px;
+  }
+  .arch-figure svg{display:block;width:100%;min-width:760px;height:auto}
+  .arch-figure figcaption{
+    margin-top:8px;color:var(--muted);font-size:12px;line-height:1.7;
+  }
+  .arch-figure figcaption strong{color:var(--ink);font-weight:600}
+  .arch-figure .shape{font-family:var(--mono);font-size:11px;fill:#5f6f7d}
+  .arch-figure .box-label{font-size:14px;font-weight:600;fill:#1e2d3a}
+  .arch-figure .small-label{font-size:10.5px;fill:#6b7785}
+  .arch-figure .ann{font-family:var(--mono);font-size:11px;fill:#596b7a}
+  .arch-figure .edge{stroke:#7e8d9b;stroke-width:1.4;fill:none}
+  .arch-figure .kv-edge{stroke:#4e7d65;stroke-width:1.5;fill:none}
+  .arch-figure .flow{font-family:var(--mono);font-size:11px;fill:#5f6f7d}
+  @media (max-width:900px){
+    .page{padding:36px 18px 54px}
+    section{padding:24px 20px}
+    h1{font-size:31px}
+    .grid-3{grid-template-columns:1fr 1fr}
+    .grid-2,.owner{grid-template-columns:1fr}
+    .stats{grid-template-columns:1fr 1fr}
+  }
+  @media (max-width:620px){
+    body{font-size:15px}
+    h1{font-size:28px}
+    h2{font-size:21px}
+    h3{font-size:16.5px}
+    .grid-3,.stats{grid-template-columns:1fr}
+    .flow{display:grid;grid-template-columns:1fr;gap:5px}
+    .flow-arrow{text-align:center;padding:0;transform:rotate(90deg)}
+    .section-head{align-items:flex-start;flex-direction:column;gap:3px}
+  }
+  @media print{
+    body{background:#fff}
+    .page{max-width:none;padding:0}
+    section{break-inside:avoid;border-color:#c9c9c9;box-shadow:none}
+    details{border-color:#c9c9c9}
+    details > summary{display:none}
+    details > .details-body{display:block;padding:8px 0}
+    .footer{display:none}
+    a{color:#000;text-decoration:none}
+  }
+</style>
+</head>
+<body>
+
+
+<div class="page">
+
+<header class="report-header">
+  <div class="eyebrow">YOCO / TENSOR ALGEBRA &amp; KV CACHE</div>
+  <h1>YOCO 架构的张量运算与共享 KV 机制</h1>
+  <p class="subtitle">
+    以 YOCO-3B 与 DeepSeek-V4.1-Flash 为对象，分析 self-decoder、cross-decoder
+    与 CED 中的关键矩阵运算、张量形状和 global KV 的存储/复用逻辑。
+  </p>
+  <div class="meta">
+    Technical Note · 2026-11 · arXiv:2405.05254 · microsoft/unilm/YOCO · HF DeepSeek-V4.1-Flash-1017
+  </div>
+</header>
+
+  <main>
+<section id="architecture" class="architecture-overview">
+      <div class="section-head"><span class="snum">ARCHITECTURE</span><h2>架构总览</h2></div>
+      <p class="lead">
+        下图把 YOCO-3B 的主路径压缩成一张结构图：self-decoder 产生 global KV，
+        cross-decoder 的每一层只保留自己的 Q，共享同一份 K̂/V̂。
+      </p>
+
+      <figure class="arch-figure">
+        <div class="svg-scroll">
+          <svg viewBox="0 0 1120 900" role="img" aria-labelledby="archTitle archDesc">
+            <title id="archTitle">YOCO decoder-decoder architecture with computation and cache paths</title>
+            <desc id="archDesc">The self-decoder processes the prompt through RMSNorm, efficient self-attention with gRet or sliding-window attention, residual addition, RMSNorm, and feed-forward. Its constant-size recurrent or window cache is shown separately. The self-decoder output X13 is normalized and projected once by W_K and W_V into a shared K/V cache. The cross-decoder computes a layer-specific Q projection, performs cross-attention over the shared K/V, adds residual, and applies feed-forward.</desc>
+            <defs>
+              <marker id="arrow" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="#6b7c8a"/>
+              </marker>
+              <marker id="arrowGreen" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="#4e7d65"/>
+              </marker>
+              <marker id="arrowAmber" markerWidth="8" markerHeight="8" refX="7" refY="4" orient="auto">
+                <path d="M0,0 L8,4 L0,8 Z" fill="#9b6a2f"/>
+              </marker>
+            </defs>
+
+            <!-- Output -->
+            <rect x="430" y="24" width="300" height="44" rx="5" fill="#ffffff" stroke="#b9c7d4"/>
+            <text x="580" y="52" text-anchor="middle" class="box-label">Output · logits</text>
+            <text x="760" y="52" class="shape">[B, S, 100288]</text>
+            <line x1="580" y1="115" x2="580" y2="70" class="edge" marker-end="url(#arrow)"/>
+
+            <!-- Cross decoder -->
+            <rect x="330" y="115" width="500" height="260" rx="9" fill="#fbfcfd" stroke="#c8d4df"/>
+            <text x="350" y="140" class="box-label">Cross-Decoder × L/2</text>
+            <text x="810" y="140" text-anchor="end" class="small-label">shared K̂/V̂ · per-layer Q</text>
+
+            <rect x="410" y="155" width="340" height="42" rx="4" fill="#eaf0f8" stroke="#b9cce0"/>
+            <text x="580" y="181" text-anchor="middle" class="box-label">Feed Forward</text>
+
+            <rect x="410" y="225" width="340" height="58" rx="4" fill="#fbf2e7" stroke="#dfc5a8"/>
+            <text x="580" y="249" text-anchor="middle" class="box-label">Cross-Attention</text>
+            <text x="580" y="268" text-anchor="middle" class="small-label">Q_l · K̂/V̂ · causal</text>
+
+            <rect x="410" y="198" width="120" height="20" rx="3" fill="#ffffff" stroke="#d6dfe7"/>
+            <text x="470" y="212" text-anchor="middle" class="small-label">+ residual</text>
+
+            <rect x="410" y="335" width="340" height="32" rx="4" fill="#ffffff" stroke="#c8d4df"/>
+            <text x="580" y="355" text-anchor="middle" class="small-label">Q_l = X · W_Q^l</text>
+
+            <line x1="580" y1="335" x2="580" y2="303" class="edge" marker-end="url(#arrow)"/>
+            <line x1="580" y1="225" x2="580" y2="220" class="edge" marker-end="url(#arrow)"/>
+            <line x1="580" y1="198" x2="580" y2="197" class="edge"/>
+            <line x1="580" y1="155" x2="580" y2="115" class="edge" marker-end="url(#arrow)"/>
+            <text x="596" y="215" class="ann">hidden</text>
+
+            <!-- Self decoder -->
+            <rect x="330" y="405" width="500" height="275" rx="9" fill="#fbfcfd" stroke="#c8d4df"/>
+            <text x="350" y="430" class="box-label">Self-Decoder × L/2</text>
+            <text x="810" y="430" text-anchor="end" class="small-label">gRet / SWA · constant cache</text>
+
+            <rect x="410" y="440" width="340" height="42" rx="4" fill="#eaf0f8" stroke="#b9cce0"/>
+            <text x="580" y="466" text-anchor="middle" class="box-label">Feed Forward / SwiGLU</text>
+
+            <rect x="410" y="505" width="120" height="20" rx="3" fill="#ffffff" stroke="#d6dfe7"/>
+            <text x="470" y="519" text-anchor="middle" class="small-label">+ residual</text>
+
+            <rect x="410" y="535" width="340" height="58" rx="4" fill="#e8f1ee" stroke="#b9d2c9"/>
+            <text x="580" y="559" text-anchor="middle" class="box-label">Efficient Self-Attention</text>
+            <text x="580" y="578" text-anchor="middle" class="small-label">gRet recurrent / SWA · O(1) state</text>
+
+            <rect x="410" y="620" width="340" height="28" rx="4" fill="#ffffff" stroke="#c8d4df"/>
+            <text x="580" y="639" text-anchor="middle" class="small-label">RMSNorm</text>
+
+            <line x1="580" y1="620" x2="580" y2="597" class="edge" marker-end="url(#arrow)"/>
+            <line x1="580" y1="535" x2="580" y2="529" class="edge" marker-end="url(#arrow)"/>
+            <line x1="580" y1="505" x2="580" y2="486" class="edge" marker-end="url(#arrow)"/>
+            <line x1="580" y1="440" x2="580" y2="405" class="edge" marker-end="url(#arrow)"/>
+            <text x="596" y="495" class="ann">hidden</text>
+
+            <!-- Embedding and input -->
+            <rect x="330" y="700" width="500" height="44" rx="5" fill="#ffffff" stroke="#b9c7d4"/>
+            <text x="580" y="728" text-anchor="middle" class="box-label">Embedding</text>
+            <text x="760" y="728" class="shape">[B, S, 3072]</text>
+            <line x1="580" y1="700" x2="580" y2="652" class="edge" marker-end="url(#arrow)"/>
+            <text x="596" y="675" class="ann">Q</text>
+            <text x="580" y="785" text-anchor="middle" class="shape">input ids [B, S]</text>
+            <line x1="580" y1="768" x2="580" y2="748" class="edge" marker-end="url(#arrow)"/>
+
+            <!-- Boundary projection: X13 -> shared KV, only once -->
+            <rect x="275" y="363" width="220" height="32" rx="4" fill="#fbf2e7" stroke="#dfc5a8"/>
+            <text x="385" y="383" text-anchor="middle" class="small-label">LN + W_K/W_V · once</text>
+            <line x1="580" y1="405" x2="580" y2="379" class="edge"/>
+            <line x1="580" y1="379" x2="495" y2="379" class="edge" marker-end="url(#arrow)"/>
+            <circle cx="580" cy="379" r="2.5" fill="#6b7c8a"/>
+            <line x1="580" y1="379" x2="580" y2="367" class="edge" marker-end="url(#arrow)"/>
+            <line x1="275" y1="379" x2="220" y2="379" class="kv-edge"/>
+            <line x1="220" y1="379" x2="220" y2="340" class="kv-edge" marker-end="url(#arrowGreen)"/>
+
+            <!-- Global KV cache -->
+            <rect x="65" y="205" width="155" height="135" rx="5" fill="#e8f1ee" stroke="#b9d2c9"/>
+            <text x="142" y="258" text-anchor="middle" class="box-label">Shared</text>
+            <text x="142" y="279" text-anchor="middle" class="box-label">K̂ / V̂ cache</text>
+            <text x="142" y="302" text-anchor="middle" class="shape">[B, S, 8, 128]</text>
+            <text x="142" y="322" text-anchor="middle" class="small-label">written once</text>
+
+            <!-- KV cache to cross attention -->
+            <line x1="220" y1="270" x2="410" y2="270" class="kv-edge" marker-end="url(#arrowGreen)"/>
+            <text x="286" y="258" class="ann">K̂/V̂</text>
+
+            <!-- Self extra cache -->
+            <rect x="65" y="520" width="155" height="105" rx="5" fill="#e8f1ee" stroke="#b9d2c9"/>
+            <text x="142" y="550" text-anchor="middle" class="box-label">Self cache</text>
+            <text x="142" y="570" text-anchor="middle" class="small-label">gRet state [B,H,Dh,Dh]</text>
+            <text x="142" y="588" text-anchor="middle" class="small-label">or SWA K/V [B,C,H,Dh]</text>
+            <text x="142" y="608" text-anchor="middle" class="small-label">constant · not global KV</text>
+            <line x1="410" y1="564" x2="220" y2="564" class="kv-edge" marker-end="url(#arrowGreen)"/>
+            <text x="275" y="552" class="ann">write state</text>
+
+            <!-- right annotations -->
+            <text x="850" y="185" class="ann">X^26</text>
+            <text x="850" y="203" class="shape">[B, S, 3072]</text>
+            <text x="850" y="395" class="ann">X^13</text>
+            <text x="850" y="413" class="shape">[B, S, 3072]</text>
+
+            <!-- computation formula callouts -->
+            <text x="65" y="712" class="small-label">gRet: S_n = γ_n S_{n−1} + K_nᵀ V_n</text>
+            <text x="65" y="735" class="small-label">X^13 = SelfDecoder(Embed(ids))</text>
+            <text x="65" y="755" class="small-label">K̂ = LN(X^13) · W_K</text>
+            <text x="65" y="775" class="small-label">V̂ = LN(X^13) · W_V</text>
+            <text x="65" y="795" class="small-label">Q_l = LN(X^l) · W_Q^l</text>
+          </svg>
+        </div>
+        <figcaption>
+          <strong>图 1.</strong> YOCO-3B 的 decoder-decoder 架构与计算路径。左：self-decoder 的
+          <span class="mono">gRet / SWA</span> 额外维护一份常数级 state 或 window cache，它与 global KV 是两套缓存。
+          中：<span class="mono">X¹³</span> 经过一次 <span class="mono">LN + W_K/W_V</span> 独立投影，
+          写入共享的 <span class="mono">K̂/V̂</span>；cross-decoder 每层只计算自己的
+          <span class="mono">Q_l = LN(X^l)·W_Q^l</span>，再与同一份 K̂/V̂ 做 cross-attention。
+        </figcaption>
+      </figure>
+    </section>
+
+
+    <!-- ============================================================ -->
+    <section id="overview">
+      <div class="section-head"><span class="snum">1</span><h2>研究范围与阅读说明</h2></div>
+      <p class="lead">
+        YOCO 的核心并不是把 KV 向量压得更小，而是改变 KV 的<strong>所有权</strong>：
+        self-decoder 生成一份 global KV，cross-decoder 的 13 层只保留各自的 Q。
+      </p>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="k">YOCO-3B</div>
+          <h4>一份 K̂ / V̂，被 13 层读取</h4>
+          <p>self-decoder 输出 <span class="tensor">X¹³</span> 后只做一次 K/V 投影；cross-decoder 每层只做 Q 投影与 cross-attention。</p>
+        </div>
+        <div class="card">
+          <div class="k">V4.1-Flash</div>
+          <h4>CED：从 H20 派生 decoder global KV</h4>
+          <p>40 层切成 20 层 causal encoder + 20 层 decoder。H20 是 encoder 的最终 hidden，decoder 读取由它派生的 compressed KV。</p>
+        </div>
+      </div>
+
+      <details>
+        <summary>展开：本页的组织方式与两条主线 <span class="tag">reading map</span></summary>
+        <div class="details-body">
+          <p>本页把原始 markdown 的长代码与逐行解释拆成两层：</p>
+          <ul class="note-list">
+            <li><strong>可见层</strong>：矩阵形状、数据流、cache 所有权、关键公式。用于快速核对 architecture。</li>
+            <li><strong>收缩层</strong>：源码片段、逐行解释、论文与代码的差异。用于复现或 code review。</li>
+          </ul>
+          <p>两条主线：</p>
+          <ul class="note-list">
+            <li><strong>YOCO-3B</strong>：论文原始 decoder-decoder 结构，26 层，13 self + 13 cross。</li>
+            <li><strong>V4.1-Flash CED</strong>：生产模型中的 causal encoder-decoder 变体，40 层，H20 是 encoder→decoder 的桥。</li>
+          </ul>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="notation">
+      <div class="section-head"><span class="snum">2</span><h2>记号与 YOCO-3B 配置</h2></div>
+      <p>全页使用同一套 BSD 记号；shape 中的字母含义固定，后文不再重复定义。</p>
+
+      <p class="table-caption"><strong>表 1.</strong> 符号、张量维度与 YOCO-3B / V4.1-Flash 配置。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>符号</th><th>含义</th><th>YOCO-3B / V4.1</th></tr></thead>
+          <tbody>
+            <tr><td class="mono">B</td><td>batch size</td><td class="muted">运行时</td></tr>
+            <tr><td class="mono">S</td><td>当前输入序列长度</td><td class="muted">运行时</td></tr>
+            <tr><td class="mono">S_total</td><td>prefill + 已生成 token 的总长度</td><td class="muted">运行时</td></tr>
+            <tr><td class="mono">D</td><td>hidden dimension</td><td class="num">3072 / 5120</td></tr>
+            <tr><td class="mono">L</td><td>总层数</td><td class="num">26 / 40</td></tr>
+            <tr><td class="mono">Hself</td><td>self-decoder head 数</td><td class="num">24</td></tr>
+            <tr><td class="mono">Hq</td><td>cross-decoder query head 数</td><td class="num">24 / 64</td></tr>
+            <tr><td class="mono">Hkv</td><td>cross-decoder KV head 数</td><td class="num">8 / 1</td></tr>
+            <tr><td class="mono">Dh</td><td>每个 head 的维度</td><td class="num">128 / 512</td></tr>
+            <tr><td class="mono">Dff</td><td>FFN intermediate dimension</td><td class="num">8192</td></tr>
+            <tr><td class="mono">V</td><td>vocabulary size</td><td class="num">100288</td></tr>
+            <tr><td class="mono">C</td><td>SWA window size</td><td class="num">128</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="stats">
+        <div class="stat"><div class="n">3072</div><div class="l">YOCO-3B · D</div></div>
+        <div class="stat"><div class="n">8192</div><div class="l">YOCO-3B · Dff</div></div>
+        <div class="stat"><div class="n">26</div><div class="l">13 self + 13 cross</div></div>
+        <div class="stat"><div class="n">128</div><div class="l">Dh &amp; SWA window</div></div>
+      </div>
+
+      <div class="callout amber">
+        <span class="label">注意</span>
+        <p>
+          表里的 <span class="tensor">Hq / Hkv / Dh</span> 是 YOCO-3B 与 V4.1-Flash 两套配置的并列值；
+          不要把 V4.1 的 <span class="tensor">head_dim=512</span> 代入 YOCO-3B 的 <span class="tensor">Dh=128</span>。
+        </p>
+      </div>
+    
+<details class="source-appendix">
+<summary>展开：本章完整源码片段（1 块） <span class="tag">source appendix</span></summary>
+<div class="details-body">
+<p class="small muted">以下按 .md 原文章节顺序截取，仅保留 <span class="mono">python</span> / <span class="mono">json</span> 源码块；shape 与表格已在正文中整理。代码为原文照录，未做改写。</p>
+<div class="code-label"><span class="file">md § 0. · 0.2 YOCO-3B 配置</span><span>6 lines · python</span></div>
+<pre><code class="language-python">args.dim = 3072
+args.hidden_dim = 8192
+args.n_layers = 26
+args.n_self_heads = 24
+args.n_attn_heads = 24
+args.n_attn_kv_heads = 8</code></pre>
+</div></details>
+</section>
+
+    <!-- ============================================================ -->
+    <section id="flow">
+      <div class="section-head"><span class="snum">3</span><h2>总体张量流</h2></div>
+      <p>
+        YOCO-3B 的主路径可以压缩成五个阶段。关键点是：<strong>K/V 投影只发生一次</strong>，
+        它位于 self-decoder 与 cross-decoder 之间。
+      </p>
+
+      <div class="flow">
+        <div class="flow-node"><div class="t">input ids</div><div class="v">[B, S]</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node"><div class="t">embedding</div><div class="v">[B, S, 3072]</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node accent"><div class="t">self-decoder × 13</div><div class="v">X¹³ [B, S, 3072]</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node amber"><div class="t">K/V once</div><div class="v">[B, S, 8, 128]</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node accent"><div class="t">cross-decoder × 13</div><div class="v">X²⁶ [B, S, 3072]</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node"><div class="t">logits</div><div class="v">[B, S, 100288]</div></div>
+      </div>
+      <p class="fig-caption"><strong>图 2.</strong> YOCO-3B 的张量流概览。self-decoder 与 cross-decoder 之间只发生一次 K/V 投影；cross-decoder 的 13 层共享同一份 K̂/V̂。</p>
+
+      <p class="table-caption"><strong>表 2.</strong> YOCO-3B 主路径各阶段的矩阵运算、输出 shape 与 cache 行为。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>阶段</th><th>矩阵运算</th><th>输出 shape</th><th>cache 行为</th></tr></thead>
+          <tbody>
+            <tr>
+              <td>Embedding</td>
+              <td><span class="tensor">X⁰ = emb(ids) · √D</span></td>
+              <td class="num">[B,S,3072]</td>
+              <td class="muted">无</td>
+            </tr>
+            <tr>
+              <td>Self ×13</td>
+              <td><span class="tensor">gRet / SWA + FFN</span></td>
+              <td class="num">[B,S,3072]</td>
+              <td>gRet state 或 SWA window</td>
+            </tr>
+            <tr>
+              <td>K/V once</td>
+              <td><span class="tensor">W_K, W_V : [3072, 1024]</span></td>
+              <td class="num">[B,S,8,128]</td>
+              <td class="ok">写一份 global KV</td>
+            </tr>
+            <tr>
+              <td>Cross ×13</td>
+              <td><span class="tensor">Q_l · shared K/V</span></td>
+              <td class="num">[B,S,24,128]</td>
+              <td class="ok">只读，不复制</td>
+            </tr>
+            <tr>
+              <td>Output</td>
+              <td><span class="tensor">RMSNorm + lm_head</span></td>
+              <td class="num">[B,S,100288]</td>
+              <td class="muted">无</td>
+            </tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>展开：forward 入口与阶段说明 <span class="tag">code + notes</span></summary>
+        <div class="details-body">
+          <div class="code-label"><span class="file">yoco/models/decoder/yoco.py</span><span>YOCO.forward 关键路径</span></div>
+          <pre><code><span class="c"># 只保留主路径</span>
+x = self.embed_scale * self.embed_tokens(x)
+x = self.self_decoder(
+    x,
+    incremental_state=incremental_state,
+    start_pos=start_pos,
+    is_prefilling=is_prefilling,
+)
+x = self.cross_decoder(
+    x,
+    incremental_state=incremental_state,
+    start_pos=start_pos,
+    skip_cross_decoder=skip_cross_decoder,
+)
+x = self.layer_norm(x)
+x = self.output_layer(x)</code></pre>
+          <p>
+            这里的 <span class="tensor">self_decoder</span> 与 <span class="tensor">cross_decoder</span>
+            是两个容器，不是两个独立模型。self 容器内部是 13 个 gRet/SWA 层；
+            cross 容器内部是 13 个 cross-attention 层。
+          </p>
+          <p>
+            <strong>shape 不变量：</strong>除了 K/V 投影把 <span class="tensor">D=3072</span>
+            投到 <span class="tensor">Hkv·Dh=1024</span>，主干的 hidden 始终是
+            <span class="tensor">[B,S,3072]</span>。因此可以把整个模型看成一条 hidden 流 + 一份旁路 KV cache。
+          </p>
+        </div>
+      </details>
+    
+<details class="source-appendix">
+<summary>展开：本章完整源码片段（3 块） <span class="tag">source appendix</span></summary>
+<div class="details-body">
+<p class="small muted">以下按 .md 原文章节顺序截取，仅保留 <span class="mono">python</span> / <span class="mono">json</span> 源码块；shape 与表格已在正文中整理。代码为原文照录，未做改写。</p>
+<div class="code-label"><span class="file">md § 1. · 1. 总体数据流</span><span>5 lines · python</span></div>
+<pre><code class="language-python">x = self.embed_scale * self.embed_tokens(x)
+x = self.self_decoder(...)
+x = self.cross_decoder(...)
+x = self.layer_norm(x)
+x = self.output_layer(x)</code></pre>
+<div class="code-label"><span class="file">md § 2. · 运算</span><span>2 lines · python</span></div>
+<pre><code class="language-python">self.embed_scale = math.sqrt(args.dim)
+self.embed_tokens = VocabParallelEmbedding(args.vocab_size, args.dim, ...)</code></pre>
+<div class="code-label"><span class="file">md § 2. · 运算</span><span>1 lines · python</span></div>
+<pre><code class="language-python">x = self.embed_scale * self.embed_tokens(x)</code></pre>
+</div></details>
+</section>
+
+    <!-- ============================================================ -->
+    <section id="self">
+      <div class="section-head"><span class="snum">4</span><h2>Self-Decoder：常数缓存</h2></div>
+      <p>
+        self-decoder 的目标不是产生最终 logits，而是把整段序列编码成
+        <span class="tensor">X¹³</span>。它使用 efficient attention（gRet 或 SWA），
+        因此每层只保留 <strong>常数大小</strong> 的 state，而不是 <span class="tensor">[B,S,·]</span> 的历史 KV。
+      </p>
+
+      <h3>gRet 的投影与 reshape</h3>
+      <p class="table-caption"><strong>表 3.</strong> gRet 的投影、reshape、recurrent state 与输出形状。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>步骤</th><th>矩阵/操作</th><th>shape</th></tr></thead>
+          <tbody>
+            <tr><td>输入</td><td><span class="tensor">X</span></td><td class="num">[B,S,3072]</td></tr>
+            <tr><td>Q/K/V/G 投影</td><td><span class="tensor">X·W_Q</span> 等，W 为 <span class="tensor">[3072,3072]</span></td><td class="num">[B,S,3072]</td></tr>
+            <tr><td>门控</td><td><span class="tensor">X·W_GT</span></td><td class="num">[B,S,24]</td></tr>
+            <tr><td>reshape</td><td><span class="tensor">[B,S,24,128] → [B,24,S,128]</span></td><td class="num">Q/K/V</td></tr>
+            <tr><td>gRet state</td><td><span class="tensor">S_n = γ_n S_{n-1} + K_nᵀ V_n</span></td><td class="num">[B,24,128,128]</td></tr>
+            <tr><td>输出</td><td><span class="tensor">Q_n S_n</span> + subLN + SwiGLU + out_proj</td><td class="num">[B,S,3072]</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="math-block">
+        <div class="eq">
+          <span><strong>S</strong><sub>n</sub> = γ<sub>n</sub> <strong>S</strong><sub>n−1</sub> + <strong>K</strong><sub>n</sub><sup>⊤</sup><strong>V</strong><sub>n</sub></span>
+          <span><strong>O</strong><sub>n</sub> = <strong>Q</strong><sub>n</sub><strong>S</strong><sub>n</sub></span>
+        </div>
+        <small>gRet 的 recurrent form。state 只与 head 数、head_dim 有关，不随 S 增长。</small>
+      </div>
+
+      <div class="callout">
+        <span class="label">为什么是 O(1)</span>
+        <p>
+          recurrent state 的形状是 <span class="tensor">[B, Hself, Dh, Dh]</span>。
+          序列每增加一个 token，只更新这个固定张量；不会追加 <span class="tensor">[B,S,·]</span> 的历史。
+        </p>
+      </div>
+
+      <h3>SWA 版本</h3>
+      <p>
+        如果配置了 <span class="tensor">sliding_window</span>，self-decoder 改用 SWA。
+        每层只保留最近 <span class="tensor">C=128</span> 个 token 的 K/V：
+      </p>
+      <div class="math-block">
+        <div class="eq">
+          <span>K<sub>swa</sub>, V<sub>swa</sub> : [B, C, Hself, Dh]</span>
+          <span>C = 128</span>
+        </div>
+        <small>同样不随完整 S 增长；与 cross-decoder 的 global KV 是两套不同的 cache。</small>
+      </div>
+
+      <details>
+        <summary>展开：gRet recurrent 源码与 SWA cache 细节 <span class="tag">source</span></summary>
+        <div class="details-body">
+          <div class="code-label"><span class="file">kernel/gate_recurrent.py</span><span>recurrent_gate_retention</span></div>
+          <pre><code><span class="k">def</span> <span class="n">recurrent_gate_retention</span>(q, k, v, g, incremental_state):
+    bsz, num_head, _, key_dim = q.shape
+    k *= key_dim ** -0.5
+
+    <span class="c"># g 是 log decay，取 exp 后得到 γ_n</span>
+    g = g.view(bsz, num_head, 1, 1).float().exp()
+
+    <span class="c"># 当前 token 的 K_n^T V_n</span>
+    kv = k.transpose(-1, -2) * v          <span class="c"># [B,H,Dh,Dh]</span>
+
+    <span class="k">if</span> <span class="s">"last_hidden_state"</span> <span class="k">in</span> incremental_state:
+        prev_kv = incremental_state[<span class="s">"last_hidden_state"</span>]
+        kv += prev_kv * g.to(prev_kv.dtype)  <span class="c"># S_n = γ_n S_{n-1} + K_n^T V_n</span>
+
+    incremental_state[<span class="s">"last_hidden_state"</span>] = kv
+
+    <span class="c"># O_n = Q_n S_n</span>
+    o = q @ kv
+    <span class="k">return</span> o</code></pre>
+          <p>
+            这段代码同时说明了 gRet 的 cache 形状：<span class="tensor">kv</span> 就是
+            <span class="tensor">[B,H,Dh,Dh]</span>，每层一份、递归更新。
+            它不是“没有 cache”，而是 cache 的序列维度被压成了固定 state。
+          </p>
+          <p>
+            SWA 版本的 cache 则是 ring/window 结构：
+            <span class="tensor">prev_key / prev_value : [B,C,Hself,Dh]</span>。
+            两者都属于 self-decoder 的常数缓存，不参与 cross-decoder 的 global KV 共享。
+          </p>
+        </div>
+      </details>
+    
+<details class="source-appendix">
+<summary>展开：本章完整源码片段（12 块） <span class="tag">source appendix</span></summary>
+<div class="details-body">
+<p class="small muted">以下按 .md 原文章节顺序截取，仅保留 <span class="mono">python</span> / <span class="mono">json</span> 源码块；shape 与表格已在正文中整理。代码为原文照录，未做改写。</p>
+<div class="code-label"><span class="file">md § 3. · 3.2 SelfDecoder 的完整代码与层数</span><span>62 lines · python</span></div>
+<pre><code class="language-python">class SelfDecoder(nn.Module):
+    def __init__(self, args, checkpoint_activations=False):
+        super().__init__()
+        self.args = args
+
+        # 关键：SelfDecoder 内部创建 L/2 个普通 DecoderLayer
+        layers = [
+            DecoderLayer(args, is_cross_layer=False)
+            for idx in range(args.n_layers // 2)
+        ]
+        if checkpoint_activations:
+            layers = [checkpoint_wrapper(layer) for layer in layers]
+        self.layers = nn.ModuleList(layers)
+
+        self.head_dim = args.dim // args.n_self_heads
+        self.block_size = 256
+        self._precomputed_freqs_cis = None
+
+    def build_rel_pos(self, x, start_pos):
+        ......
+
+    def get_index_mask(self, x, length, pad_length):
+        # prefill 时标记哪些位置是 padding
+        return torch.arange(pad_length, device=x.device) &gt;= length
+
+    def forward(self, x, incremental_state=None,
+                is_prefilling=False, start_pos=0):
+        # gRet 的 chunkwise 实现要求 prefill 长度是 256 的倍数
+        if (is_prefilling and x.size(1) % self.block_size != 0
+                and self.args.sliding_window is None):
+            padding_len = self.block_size - x.size(1) % self.block_size
+            x = F.pad(x, (0, 0, 0, padding_len), value=0)
+        else:
+            padding_len = 0
+
+        if incremental_state is not None and is_prefilling:
+            index_mask = self.get_index_mask(
+                x, x.size(1) - padding_len, x.size(1)
+            )
+
+        rel_pos = self.build_rel_pos(x, start_pos)
+
+        # 顺序经过 L/2 个 self 层
+        for idx, layer in enumerate(self.layers):
+            if incremental_state is not None:
+                if idx not in incremental_state:
+                    incremental_state[idx] = {}
+                if is_prefilling:
+                    incremental_state[idx][&quot;index_mask&quot;] = index_mask
+
+            x = layer(
+                x,
+                start_pos=start_pos,
+                rel_pos=rel_pos,
+                incremental_state=incremental_state[idx]
+                if incremental_state is not None else None,
+                is_prefilling=is_prefilling,
+            )
+
+        # 去掉 prefill 时为了 chunk 对齐补的 padding
+        x = x[:, :x.size(1) - padding_len, :]
+        return x</code></pre>
+<div class="code-label"><span class="file">md § 3. · SelfDecoder 调用的 DecoderLayer</span><span>1 lines · python</span></div>
+<pre><code class="language-python">DecoderLayer(args, is_cross_layer=False)</code></pre>
+<div class="code-label"><span class="file">md § 3. · SelfDecoder 调用的 DecoderLayer</span><span>85 lines · python</span></div>
+<pre><code class="language-python">class DecoderLayer(nn.Module):
+    def __init__(
+        self,
+        args,
+        is_cross_layer=False
+    ):
+        super().__init__()
+        self.args = args
+        self.is_cross_layer = is_cross_layer
+
+        # self 层：根据配置选择 gRet 或 SWA
+        if is_cross_layer:
+            self.mixer = CrossAttention(args)
+        elif args.sliding_window is not None:
+            self.mixer = SlidingWindowAttention(args)
+        else:
+            self.mixer = GateRetention(args)
+
+        self.mixer_layer_norm = RMSNorm(
+            args.dim,
+            eps=args.norm_eps,
+        )
+
+        self.ffn = FeedForwardNetwork(
+            args.dim,
+            args.hidden_dim,
+            args.load_checkpoint,
+        )
+
+        self.final_layer_norm = RMSNorm(
+            args.dim,
+            eps=args.norm_eps,
+        )
+
+    def forward(
+        self,
+        x,
+        start_pos=0,
+        key=None,
+        value=None,
+        rel_pos=None,
+        incremental_state=None,
+        is_prefilling=False,
+    ):
+        residual = x
+
+        # 1) Mixer 前的 RMSNorm
+        x = self.mixer_layer_norm(x)
+
+        if self.is_cross_layer:
+            # cross 层：K/V 由外层 CrossDecoder 传入
+            x = self.mixer(
+                x,
+                key,
+                value,
+                rel_pos=rel_pos,
+            )
+        elif self.args.sliding_window is not None:
+            # self 层：sliding-window attention
+            x = self.mixer(
+                x,
+                rel_pos=rel_pos,
+                start_pos=start_pos,
+                incremental_state=incremental_state,
+            )
+        else:
+            # self 层：gated retention
+            x = self.mixer(
+                x,
+                rel_pos=rel_pos,
+                incremental_state=incremental_state,
+                is_prefilling=is_prefilling,
+            )
+
+        # 2) Mixer residual
+        x = x + residual
+        residual = x
+
+        # 3) FFN 前的 RMSNorm
+        x = self.final_layer_norm(x)
+        x = self.ffn(x)
+
+        # 4) FFN residual
+        x = x + residual
+        return x</code></pre>
+<div class="code-label"><span class="file">md § 3. · 3.3 gated retention 的输入输出</span><span>9 lines · python</span></div>
+<pre><code class="language-python">self.num_heads = args.n_self_heads // args.model_parallel_size
+self.head_dim = args.dim // args.n_self_heads
+// 层构建
+self.q_proj = ColumnParallelLinear(args.dim, args.dim, ...)
+self.k_proj = ColumnParallelLinear(args.dim, args.dim, ...)
+self.v_proj = ColumnParallelLinear(args.dim, args.dim, ...)
+self.g_proj = ColumnParallelLinear(args.dim, args.dim, ...)
+self.gt_proj = ColumnParallelLinear(args.dim, args.n_self_heads, ...)
+self.out_proj = RowParallelLinear(args.dim, args.dim, ...)</code></pre>
+<div class="code-label"><span class="file">md § 3. · reshape</span><span>4 lines · python</span></div>
+<pre><code class="language-python">qr = q.view(B, S, Hself, Dh)
+kr = k.view(B, S, Hself, Dh)
+v  = v.view(B, S, Hself, Dh).transpose(1, 2)
+gt = gt.view(B, S, Hself).transpose(1, 2)</code></pre>
+<div class="code-label"><span class="file">md § 3. · RoPE 和 gate</span><span>3 lines · python</span></div>
+<pre><code class="language-python">qr = apply_rotary_emb(qr, ...)
+kr = apply_rotary_emb(kr, ...)
+gt = F.logsigmoid(gt) / self.gate_logit_normalizer</code></pre>
+<div class="code-label"><span class="file">md § 3. · attention 输出</span><span>1 lines · python</span></div>
+<pre><code class="language-python">o = chunk_gate_retention(qr, kr, v, gt, chunk_size=256)</code></pre>
+<div class="code-label"><span class="file">md § 3. · attention 输出</span><span>21 lines · python</span></div>
+<pre><code class="language-python">def recurrent_gate_retention(q, k, v, g, incremental_state):
+    bsz, num_head, _, key_dim = q.shape
+    k *= key_dim ** -0.5
+
+    # g 是 log decay，取 exp 后得到 γ_n
+    g = g.view(bsz, num_head, 1, 1).float().exp()
+
+    # 当前 token 的 K_n^T V_n
+    kv = k.transpose(-1, -2) * v          # [B,H,Dh,Dh]
+
+    # 取出上一步的 S_{n-1}，加上 γ_n * S_{n-1}
+    if &quot;last_hidden_state&quot; in incremental_state:
+        prev_kv = incremental_state[&quot;last_hidden_state&quot;]
+        kv += prev_kv * g.to(prev_kv.dtype)  # S_n = γ_n S_{n-1} + K_n^T V_n
+
+    # 写回 S_n
+    incremental_state[&quot;last_hidden_state&quot;] = kv
+
+    # O_n = Q_n S_n
+    o = q @ kv                              # [B,H,S,Dh]
+    return o</code></pre>
+<div class="code-label"><span class="file">md § 3. · subln（逐 head 的 RMSNorm） + swiglu（门控线性单元） + out_proj</span><span>3 lines · python</span></div>
+<pre><code class="language-python">o = self.subln(o).transpose(1, 2).reshape(B, S, Hself * Dh)
+o = swiglu(g, o)
+o = self.out_proj(o)</code></pre>
+<div class="code-label"><span class="file">md § 3. · 3.4 sliding-window attention 版本</span><span>93 lines · python</span></div>
+<pre><code class="language-python">class SlidingWindowAttention(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.args = args
+        self.embed_dim = args.dim
+        self.num_heads = args.n_self_heads // args.model_parallel_size
+        self.window_size = args.sliding_window
+        self.head_dim = args.dim // args.n_self_heads
+
+        self.q_proj = ColumnParallelLinear(
+            args.dim, args.dim, bias=False,
+            gather_output=False, init_method=init_method,
+        )
+        self.k_proj = ColumnParallelLinear(
+            args.dim, args.dim, bias=False,
+            gather_output=False, init_method=init_method,
+        )
+        self.v_proj = ColumnParallelLinear(
+            args.dim, args.dim, bias=False,
+            gather_output=False, init_method=init_method,
+        )
+        self.out_proj = RowParallelLinear(
+            args.dim, args.dim, bias=False,
+            input_is_parallel=True, init_method=init_method,
+        )
+
+    def forward(self, x, rel_pos, start_pos=0, incremental_state=None):
+        bsz, tgt_len, embed_dim = x.size()
+        src_len = tgt_len
+
+        q = self.q_proj(x)
+        k = self.k_proj(x)
+        v = self.v_proj(x)
+
+        q = q.view(bsz, tgt_len, self.num_heads, self.head_dim)
+        k = k.view(bsz, src_len, self.num_heads, self.head_dim)
+        v = v.view(bsz, src_len, self.num_heads, self.head_dim)
+
+        q = apply_rotary_emb(q, *rel_pos, interleaved=True)
+        k = apply_rotary_emb(k, *rel_pos, interleaved=True)
+
+        if incremental_state is not None:
+            if &quot;prev_key&quot; not in incremental_state:
+                incremental_state[&quot;prev_key&quot;] = torch.empty(
+                    self.args.max_batch_size,
+                    self.window_size,
+                    self.num_heads,
+                    self.head_dim,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+                incremental_state[&quot;prev_value&quot;] = torch.empty(
+                    self.args.max_batch_size,
+                    self.window_size,
+                    self.num_heads,
+                    self.head_dim,
+                    device=x.device,
+                    dtype=x.dtype,
+                )
+
+            key = torch.cat(
+                [incremental_state[&quot;prev_key&quot;][:bsz, :start_pos], k],
+                dim=1,
+            )
+            value = torch.cat(
+                [incremental_state[&quot;prev_value&quot;][:bsz, :start_pos], v],
+                dim=1,
+            )
+
+            if key.shape[1] &gt; self.window_size:
+                incremental_state[&quot;prev_key&quot;][:bsz] = key[:, -self.window_size:]
+                incremental_state[&quot;prev_value&quot;][:bsz] = value[:, -self.window_size:]
+            else:
+                incremental_state[&quot;prev_key&quot;][
+                    :bsz, start_pos:start_pos + tgt_len
+                ] = k
+                incremental_state[&quot;prev_value&quot;][
+                    :bsz, start_pos:start_pos + tgt_len
+                ] = v
+        else:
+            key, value = k, v
+
+        attn = flash_attn_func(
+            q, key, value,
+            causal=True,
+            window_size=(self.window_size - 1, 0),
+        )
+        attn = attn.reshape(
+            bsz, tgt_len, self.head_dim * self.num_heads
+        )
+
+        attn = self.out_proj(attn)
+        return attn</code></pre>
+<div class="code-label"><span class="file">md § 3. · 3.5 FFN / SwiGLU</span><span>3 lines · python</span></div>
+<pre><code class="language-python">self.fc1 = ColumnParallelLinear(D, Dff)
+self.gate = ColumnParallelLinear(D, Dff)
+self.fc2 = RowParallelLinear(Dff, D)</code></pre>
+<div class="code-label"><span class="file">md § 3. · 3.5 FFN / SwiGLU</span><span>3 lines · python</span></div>
+<pre><code class="language-python">x = x.reshape(-1, D)
+x = self.fc2(swiglu(self.fc1(x), self.gate(x)))
+x = x.view(B, S, D)</code></pre>
+</div></details>
+</section>
+
+    <!-- ============================================================ -->
+    <section id="cross">
+      <div class="section-head"><span class="snum">5</span><h2>Cross-Decoder 与共享 KV</h2></div>
+      <p>
+        YOCO 的“只缓存一次”发生在 self-decoder 与 cross-decoder 的交界处：
+        <span class="tensor">X¹³</span> 经过一次 RMSNorm 和一组 K/V 投影，得到全局
+        <span class="tensor">K̂/V̂</span>；13 个 cross 层只计算各自的 Q。
+      </p>
+
+      <div class="math-block">
+        <div class="eq">
+          <span><strong>K̂</strong> = LN(X<sup>13</sup>) W<sub>K</sub></span>
+          <span><strong>V̂</strong> = LN(X<sup>13</sup>) W<sub>V</sub></span>
+        </div>
+        <div class="eq">
+          <span><strong>Q̂</strong><sup>l</sup> = LN(X<sup>l</sup>) W<sub>Q</sub><sup>l</sup></span>
+          <span>Y<sup>l</sup> = Attn(Q̂<sup>l</sup>, K̂, V̂) + X<sup>l</sup></span>
+        </div>
+        <small>l = 14 … 26。K̂/V̂ 与层号 l 无关；Q̂ 才是 layer-specific。</small>
+      </div>
+
+      <div class="grid-2">
+        <div class="card">
+          <div class="k">共享侧</div>
+          <h4>K/V projector 只存在一份</h4>
+          <p>
+            <span class="tensor">W_K, W_V : [3072, 1024]</span><br>
+            <span class="tensor">K̂/V̂ : [B,S,8,128]</span><br>
+            整个 CrossDecoder 容器只建这一组投影。
+          </p>
+        </div>
+        <div class="card">
+          <div class="k">独立侧</div>
+          <h4>每个 cross 层保留自己的 Q / out_proj / FFN</h4>
+          <p>
+            <span class="tensor">Q_l : [B,S,24,128]</span><br>
+            <span class="tensor">out_proj : [3072,3072]</span><br>
+            只有 Q 是 layer-specific；K/V 是全局对象。
+          </p>
+        </div>
+      </div>
+
+      <h3>GQA 的物理形状</h3>
+      <p>
+        论文为了简洁写成 <span class="tensor">W_K,W_V ∈ R^{D×D}</span>，代码实际使用 GQA：
+        24 个 Q head 对应 8 个 KV head。
+      </p>
+
+      <p class="table-caption"><strong>表 4.</strong> Cross-decoder 中 K/V、Q 与 GQA 物理 cache 的形状。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>张量</th><th>逻辑/物理形状</th><th>说明</th></tr></thead>
+          <tbody>
+            <tr><td>W_K / W_V</td><td class="num">[3072, 8×128] = [3072,1024]</td><td>不是 [3072,3072]</td></tr>
+            <tr><td>K̂ / V̂</td><td class="num">[B,S,8,128]</td><td>物理 cache；不复制到 24 head</td></tr>
+            <tr><td>Q_l</td><td class="num">[B,S,24,128]</td><td>每层独立</td></tr>
+            <tr><td>attention 输出</td><td class="num">[B,S,24,128]</td><td>flash-attn 内部做 GQA 广播</td></tr>
+            <tr><td>global cache</td><td class="num">[B,S_total,8,128]</td><td>K/V 各一份</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout amber">
+        <span class="label">常见误解</span>
+        <p>
+          “共享 KV”不是“cross 层里没有 K/V 投影代码”。准确地说：
+          <strong>K/V 投影代码只存在于 CrossDecoder 容器上</strong>，
+          13 个 cross 层只接收并使用它算出的同一个 <span class="tensor">key/value</span>。
+        </p>
+      </div>
+
+      <details>
+        <summary>展开：CrossDecoder.forward、CrossAttention 与 prefill 提前退出 <span class="tag">source</span></summary>
+        <div class="details-body">
+          <div class="code-label"><span class="file">yoco/models/decoder/yoco.py</span><span>CrossDecoder.forward（节选）</span></div>
+          <pre><code><span class="c"># 1) 只做一次 KV 投影</span>
+x_norm = self.kv_layer_norm(x)
+key = self.k_proj(x_norm)
+value = self.v_proj(x_norm)
+
+<span class="c"># 2) reshape 成 KV heads</span>
+key = key.view(bsz, seqlen, self.num_heads, self.head_dim)
+value = value.view(bsz, seqlen, self.num_heads, self.head_dim)
+
+<span class="c"># 3) 只给 K 加 RoPE</span>
+key = apply_rotary_emb(key, *rel_pos, interleaved=<span class="k">True</span>)
+
+<span class="c"># 4) 写入并截取共享 KV cache</span>
+<span class="k">if</span> incremental_state <span class="k">is not</span> <span class="k">None</span>:
+    incremental_state[<span class="s">"prev_key"</span>][:, start_pos:start_pos+seqlen] = key
+    incremental_state[<span class="s">"prev_value"</span>][:, start_pos:start_pos+seqlen] = value
+
+    key = incremental_state[<span class="s">"prev_key"</span>][:, :start_pos+seqlen]
+    value = incremental_state[<span class="s">"prev_value"</span>][:, :start_pos+seqlen]
+
+<span class="c"># 5) prefill 提前退出</span>
+<span class="k">if</span> skip_cross_decoder:
+    <span class="k">return</span> torch.zeros(bsz, 1, embed_dim, device=x.device, dtype=x.dtype)
+
+<span class="c"># 6) 13 个 cross 层复用同一份 key/value</span>
+<span class="k">for</span> layer <span class="k">in</span> self.layers:
+    x = layer(x, key=key, value=value, rel_pos=rel_pos)
+<span class="k">return</span> x</code></pre>
+
+          <div class="code-label"><span class="file">cross_attention.py</span><span>每层只有 Q 与 out_proj</span></div>
+          <pre><code>q = self.q_proj(x)
+q = q.view(bsz, tgt_len, self.num_heads, self.head_dim)
+q = apply_rotary_emb(q, *rel_pos, interleaved=<span class="k">True</span>)
+
+<span class="c"># key/value 由外层 CrossDecoder 传入</span>
+attn = flash_attn_func(q, key, value, causal=<span class="k">True</span>)
+attn = attn.view(bsz, tgt_len, self.head_dim * self.num_heads)
+attn = self.out_proj(attn)</code></pre>
+
+          <p><strong>prefill 提前退出的注意点：</strong></p>
+          <ul class="note-list">
+            <li>返回的 <span class="tensor">[B,1,D]</span> 是代码里的占位输出，不是完整 <span class="tensor">[B,S,D]</span> logits。</li>
+            <li>返回前 K/V 已经写入了 <span class="tensor">prev_key/prev_value</span>；因此“跳过 cross”不会丢掉 global KV。</li>
+            <li>实际 serving 还需要在后端补上 logits 计算/采样路径，不能把占位张量直接当输出。</li>
+          </ul>
+        </div>
+      </details>
+    
+<details class="source-appendix">
+<summary>展开：本章完整源码片段（4 块） <span class="tag">source appendix</span></summary>
+<div class="details-body">
+<p class="small muted">以下按 .md 原文章节顺序截取，仅保留 <span class="mono">python</span> / <span class="mono">json</span> 源码块；shape 与表格已在正文中整理。代码为原文照录，未做改写。</p>
+<div class="code-label"><span class="file">md § 4. · DecoderLayer：self 和 cross 的差别在 Mixer</span><span>45 lines · python</span></div>
+<pre><code class="language-python">class DecoderLayer(nn.Module):
+    def __init__(self, args, is_cross_layer=False):
+        super().__init__()
+        self.args = args
+        self.is_cross_layer = is_cross_layer
+
+        if is_cross_layer:
+            self.mixer = CrossAttention(args)       # ***cross: 只有 Q/out***
+        elif args.sliding_window is not None:
+            self.mixer = SlidingWindowAttention(args)
+        else:
+            self.mixer = GateRetention(args)        # ***self: Q/K/V/G 全套***
+
+        self.mixer_layer_norm = RMSNorm(args.dim, eps=args.norm_eps)
+        self.ffn = FeedForwardNetwork(
+            args.dim, args.hidden_dim, args.load_checkpoint
+        )
+        self.final_layer_norm = RMSNorm(args.dim, eps=args.norm_eps)
+
+    def forward(self, x, start_pos=0, key=None, value=None,
+                rel_pos=None, incremental_state=None, is_prefilling=False):
+        residual = x
+        x = self.mixer_layer_norm(x)
+
+        if self.is_cross_layer:
+            # 注意：这里传入的 key/value 来自外层 CrossDecoder
+            x = self.mixer(x, key, value, rel_pos=rel_pos)
+        elif self.args.sliding_window is not None:
+            x = self.mixer(
+                x, rel_pos=rel_pos, start_pos=start_pos,
+                incremental_state=incremental_state,
+            )
+        else:
+            x = self.mixer(
+                x, rel_pos=rel_pos,
+                incremental_state=incremental_state,
+                is_prefilling=is_prefilling,
+            )
+
+        x = x + residual
+        residual = x
+        x = self.final_layer_norm(x)
+        x = self.ffn(x)
+        x = x + residual
+        return x</code></pre>
+<div class="code-label"><span class="file">md § 4. · CrossDecoder：只建一份 K/V projector（共享kv在这追加）</span><span>91 lines · python</span></div>
+<pre><code class="language-python">class CrossDecoder(nn.Module):
+    def __init__(self, args, checkpoint_activations=False):
+        super().__init__()
+        self.args = args
+
+        # 注意：num_heads 是 KV head 数，不是 Q head 数
+        self.num_heads = args.n_attn_kv_heads
+        self.head_dim = args.dim // args.n_attn_heads
+
+        # 整个 CrossDecoder 只有这一组 K/V 投影
+        self.k_proj = ColumnParallelLinear(
+            args.dim,
+            self.head_dim * args.n_attn_kv_heads,
+            bias=False,
+        )
+        self.v_proj = ColumnParallelLinear(
+            args.dim,
+            self.head_dim * args.n_attn_kv_heads,
+            bias=False,
+        )
+        self.kv_layer_norm = RMSNorm(args.dim, eps=args.norm_eps)
+
+        # 13 个 cross 层
+        layers = [
+            DecoderLayer(args, is_cross_layer=True)
+            for idx in range(args.n_layers // 2)
+        ]
+        if checkpoint_activations:
+            layers = [checkpoint_wrapper(layer) for layer in layers]
+        self.layers = nn.ModuleList(layers)
+        self._precomputed_freqs_cis = None
+
+    def build_rel_pos(self, x, start_pos):
+        ......
+
+    def forward(self, x, incremental_state=None, start_pos=0,
+                skip_cross_decoder=False):
+        bsz, seqlen, embed_dim = x.size()
+
+        # 1) 只做一次 KV 投影
+        x_norm = self.kv_layer_norm(x)
+        key = self.k_proj(x_norm)
+        value = self.v_proj(x_norm)
+
+        # 2) reshape 成 KV heads
+        key = key.view(bsz, seqlen, self.num_heads, self.head_dim)
+        value = value.view(bsz, seqlen, self.num_heads, self.head_dim)
+
+        # 3) 只给 K 加 RoPE
+        rel_pos = self.build_rel_pos(x, start_pos)
+        key = apply_rotary_emb(key, *rel_pos, interleaved=True)
+
+      # 4) *****写入并截取共享 KV cache*****
+        if incremental_state is not None:
+            if &quot;prev_key&quot; not in incremental_state:
+                incremental_state[&quot;prev_key&quot;] = torch.empty(
+                    bsz, self.args.max_seq_len,
+                    self.num_heads, self.head_dim,
+                    device=x.device, dtype=x.dtype,
+                )
+                incremental_state[&quot;prev_value&quot;] = torch.empty(
+                    bsz, self.args.max_seq_len,
+                    self.num_heads, self.head_dim,
+                    device=x.device, dtype=x.dtype,
+                )
+
+            incremental_state[&quot;prev_key&quot;][
+                :, start_pos:start_pos + seqlen
+            ] = key
+            incremental_state[&quot;prev_value&quot;][
+                :, start_pos:start_pos + seqlen
+            ] = value
+
+            key = incremental_state[&quot;prev_key&quot;][:, :start_pos + seqlen]
+            value = incremental_state[&quot;prev_value&quot;][:, :start_pos + seqlen]
+
+        # 5) prefill 提前退出
+        if skip_cross_decoder:
+            return torch.zeros(
+                bsz, 1, embed_dim, device=x.device, dtype=x.dtype
+            )
+
+        # 6) 13 个 cross 层复用同一份 key/value
+        for layer in self.layers:
+            x = layer(
+                x,
+                key=key,
+                value=value,
+                rel_pos=rel_pos,
+            )
+        return x</code></pre>
+<div class="code-label"><span class="file">md § 4. · CrossAttention：每层只有 Q 和 out_proj</span><span>31 lines · python</span></div>
+<pre><code class="language-python">class CrossAttention(nn.Module):
+    def __init__(self, args):
+        super().__init__()
+        self.embed_dim = args.dim
+        self.num_heads = args.n_attn_heads // args.model_parallel_size
+        self.num_kv_heads = args.n_attn_kv_heads // args.model_parallel_size
+        self.head_dim = args.dim // args.n_attn_heads
+
+        self.q_proj = ColumnParallelLinear(
+            args.dim, args.dim, bias=False,
+            gather_output=False, init_method=init_method,
+        )
+        self.out_proj = RowParallelLinear(
+            args.dim, args.dim, bias=False,
+            input_is_parallel=True, init_method=init_method,
+        )
+
+    def forward(self, x, key, value, rel_pos):
+        bsz, tgt_len, _ = x.size()
+
+        q = self.q_proj(x)
+        q = q.view(bsz, tgt_len, self.num_heads, self.head_dim)
+        q = apply_rotary_emb(q, *rel_pos, interleaved=True)
+
+        # key/value 是外层 CrossDecoder 传入的共享 KV
+        attn = flash_attn_func(q, key, value, causal=True)
+        attn = attn.view(
+            bsz, tgt_len, self.head_dim * self.num_heads
+        )
+        attn = self.out_proj(attn)
+        return attn</code></pre>
+<div class="code-label"><span class="file">md § 4. · 4.4 KV cache</span><span>12 lines · python</span></div>
+<pre><code class="language-python">incremental_state[&quot;prev_key&quot;] = torch.empty(
+    bsz, max_seq_len, Hkv, Dh
+)
+incremental_state[&quot;prev_value&quot;] = torch.empty(
+    bsz, max_seq_len, Hkv, Dh
+)
+
+incremental_state[&quot;prev_key&quot;][:, start_pos:start_pos+seqlen] = key
+incremental_state[&quot;prev_value&quot;][:, start_pos:start_pos+seqlen] = value
+
+key = incremental_state[&quot;prev_key&quot;][:, :start_pos+seqlen]
+value = incremental_state[&quot;prev_value&quot;][:, :start_pos+seqlen]</code></pre>
+</div></details>
+</section>
+
+    <!-- ============================================================ -->
+    <section id="storage">
+      <div class="section-head"><span class="snum">6</span><h2>共享 KV 的存储逻辑</h2></div>
+      <p>
+        YOCO 的 cache 不是“一个统一池子”，而是三类生命周期不同的张量。
+        理解“谁写、谁读、是否随 S 增长”比记住总大小更重要。
+      </p>
+
+      <div class="owner">
+        <div class="owner-box">
+          <h4>写者 / 读者</h4>
+          <div class="owner-row"><span class="a">CrossDecoder 容器</span><span class="b">写 K̂/V̂ 一次</span></div>
+          <div class="owner-row"><span class="a">13 × CrossAttention</span><span class="b">只读 K̂/V̂</span></div>
+          <div class="owner-row"><span class="a">13 × SelfDecoder</span><span class="b">写 gRet state / SWA</span></div>
+          <div class="owner-row"><span class="a">SelfDecoder 输出 X¹³</span><span class="b">K/V 的唯一输入</span></div>
+        </div>
+        <div class="owner-box">
+          <h4>生命周期</h4>
+          <div class="owner-row"><span class="a">global K̂/V̂</span><span class="b">随 S_total 增长；只一份</span></div>
+          <div class="owner-row"><span class="a">gRet state</span><span class="b">每层固定；不随 S 增长</span></div>
+          <div class="owner-row"><span class="a">SWA cache</span><span class="b">每层 C=128；环形覆盖</span></div>
+          <div class="owner-row"><span class="a">Q / FFN 激活</span><span class="b">前向临时；不缓存</span></div>
+        </div>
+      </div>
+
+      <p class="table-caption"><strong>表 5.</strong> YOCO 中三类 cache 的份数、形状与生命周期。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>cache</th><th>shape</th><th>份数</th><th>随 S 增长？</th></tr></thead>
+          <tbody>
+            <tr><td>Cross global K̂</td><td class="num">[B, S_total, Hkv, Dh]</td><td class="ok">1</td><td class="ok">是，但只一份</td></tr>
+            <tr><td>Cross global V̂</td><td class="num">[B, S_total, Hkv, Dh]</td><td class="ok">1</td><td class="ok">是，但只一份</td></tr>
+            <tr><td>Self gRet state</td><td class="num">[B, Hself, Dh, Dh]</td><td>13</td><td class="bad">否，固定</td></tr>
+            <tr><td>Self SWA K/V</td><td class="num">[B, C, Hself, Dh]</td><td>13 × 2</td><td class="bad">否，固定窗口</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <span class="label">存储层面的“only cache once”</span>
+        <p>
+          论文的 “only cache once” 指的是 <strong>global KV</strong>：13 个 cross 层不再各存一份
+          <span class="tensor">[B,S,8,128]</span>。self-decoder 仍然有自己的常数缓存（gRet state 或 SWA window），
+          但它不随 S 增长，量级与 global KV 不同。
+        </p>
+      </div>
+
+          </section>
+
+    <!-- ============================================================ -->
+    <section id="shape">
+      <div class="section-head"><span class="snum">7</span><h2>完整 shape flow（YOCO-3B）</h2></div>
+      <p>把前面的矩阵运算串成一条链。所有 shape 均以 <span class="tensor">B,S</span> 为运行时变量。</p>
+
+      <p class="table-caption"><strong>表 6.</strong> YOCO-3B 的完整张量 shape flow。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>#</th><th>阶段</th><th>关键张量</th><th>shape</th></tr></thead>
+          <tbody>
+            <tr><td class="num">01</td><td>input ids</td><td class="mono">ids</td><td class="num">[B,S]</td></tr>
+            <tr><td class="num">02</td><td>embedding</td><td class="mono">X⁰</td><td class="num">[B,S,3072]</td></tr>
+            <tr><td class="num">03</td><td>gRet 投影</td><td class="mono">Q,K,V,G</td><td class="num">[B,S,3072]</td></tr>
+            <tr><td class="num">04</td><td>gRet reshape</td><td class="mono">Q,K,V</td><td class="num">[B,24,S,128]</td></tr>
+            <tr><td class="num">05</td><td>gRet state</td><td class="mono">S_state</td><td class="num">[B,24,128,128]</td></tr>
+            <tr><td class="num">06</td><td>self 输出</td><td class="mono">X¹³</td><td class="num">[B,S,3072]</td></tr>
+            <tr><td class="num">07</td><td>K/V 投影</td><td class="mono">K̂,V̂</td><td class="num">[B,S,8,128]</td></tr>
+            <tr><td class="num">08</td><td>每层 Q</td><td class="mono">Q_l</td><td class="num">[B,S,24,128]</td></tr>
+            <tr><td class="num">09</td><td>cross 输出</td><td class="mono">X²⁶</td><td class="num">[B,S,3072]</td></tr>
+            <tr><td class="num">10</td><td>logits</td><td class="mono">output</td><td class="num">[B,S,100288]</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <details>
+        <summary>展开：完整 shape flow 文本版 <span class="tag">ascii</span></summary>
+        <div class="details-body">
+          <pre><code>input ids
+  [B, S]
+    |
+embedding
+  [B, S, 3072]
+    |
+self-decoder × 13
+  |
+  +-- RMSNorm [B,S,3072]
+  +-- gRet:
+  |     Q/K/V/G [B,S,3072]
+  |     reshape  [B,24,S,128]
+  |     state    [B,24,128,128]
+  |     output   [B,S,3072]
+  +-- FFN:
+  |     [B*S,3072] -> [B*S,8192] -> [B*S,3072]
+  +-- residual
+  |
+X^13
+  [B, S, 3072]
+    |
+cross-decoder KV (once)
+  RMSNorm [B,S,3072]
+  K/V proj [B,S,8,128]
+  K RoPE
+  cache [B,S,8,128]
+    |
+cross-decoder × 13
+  |
+  +-- Q proj [B,S,24,128]
+  +-- Q RoPE
+  +-- flash_attn(Q, shared K/V)
+  |     [B,S,24,128]
+  +-- out_proj [B,S,3072]
+  +-- FFN [B*S,8192] -> [B*S,3072]
+  +-- residual
+  |
+X^26
+  [B, S, 3072]
+    |
+RMSNorm
+  [B, S, 3072]
+    |
+output projection
+  [B, S, 100288]</code></pre>
+        </div>
+      </details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="ced">
+      <div class="section-head"><span class="snum">8</span><h2>V4.1-Flash：CED 与 H20</h2></div>
+      <p class="lead">
+        V4.1 的 CED 可以看成 YOCO 思路的生产化变体：前 20 层是 causal encoder，
+        后 20 层是 decoder；两半之间的桥不是复制 H20，而是
+        <strong>从 H20 派生出的 decoder global KV</strong>。
+      </p>
+
+      <div class="callout">
+        <span class="label">核心机制</span>
+        <p>
+          encoder 处理完整 prompt，输出最终 hidden <span class="tensor">H20</span>；
+          layer20 的 compressor 把 H20 投影成一份 compressed KV，并发布到
+          <span class="tensor">shared_attn.compress_kv</span>；
+          decoder 层只保留自己的 Q，读取这份共享 KV，不再各自写 global KV。
+        </p>
+      </div>
+
+      <div class="flow">
+        <div class="flow-node"><div class="t">encoder</div><div class="v">layer 0–19</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node amber"><div class="t">H20</div><div class="v">encoder 最终 hidden</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node"><div class="t">layer20 compressor</div><div class="v">project → publish</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node accent"><div class="t">shared compressed KV</div><div class="v">read-only for decoder</div></div>
+        <div class="flow-arrow">→</div>
+        <div class="flow-node accent"><div class="t">decoder 21–39</div><div class="v">Q + shared KV</div></div>
+      </div>
+      <p class="fig-caption"><strong>图 3.</strong> V4.1-Flash CED 的机制路径。H20 不直接进入 decoder；它先被 layer20 投影成 shared compressed KV，后续 decoder 层只读这份 cache。</p>
+
+      <h3>执行顺序</h3>
+      <ol class="note-list">
+        <li><strong>Encoder：</strong>前 20 层处理完整 prompt；layer 0–1 为 SWA-only，layer 2–19 使用 compressed KV。输出 H20。</li>
+        <li><strong>Boundary：</strong>layer20 是第一个 ratio=1 的 decoder 层，也是最后一个 <span class="tensor">kv_source_layer</span>。它运行 compressor，把 H20 投影为 decoder 的 global KV。</li>
+        <li><strong>Publish：</strong>compressor 先产生 latent；indexer 使用未 RoPE 的 latent 计算 top-k；随后 latent 做 RoPE/量化并写入 <span class="tensor">compress_kv_cache</span>。</li>
+        <li><strong>Consume：</strong>layer21–39 的 <span class="tensor">is_kv_source=False</span>，不运行自己的 compressor；它们读取 <span class="tensor">shared_attn.compress_kv</span>，并各自维护自己的 window KV。</li>
+      </ol>
+
+      <div class="callout amber">
+        <span class="label">论文 vs. HF reference</span>
+        <p>
+          论文写的是每个 decoder 层从 H20 做独立投影 <span class="tensor">C_l = H20 · W_l^KV</span>。
+          HF 的 <span class="tensor">inference/model.py</span> 是 readable reference：
+          只看到 layer20 的一个 Compressor，后续层读同一份 cache，没有把每层
+          <span class="tensor">W_l^KV</span> 显式展开。
+        </p>
+      </div>
+
+      <div class="callout">
+        <span class="label">CED 与 encoder 内部 KV share 的关系</span>
+        <p>
+          在数据流上，layer20 的 H20→KV 与 encoder 内部 layer2/8/14 的 source→consumer
+          是同构的：都是 source 写、consumer 读。区别在于 H20 是 encoder 的最终输出，
+          decoder 侧的 global KV 只读；CED 的价值来自“prefill 只跑 encoder + decoder 使用 H20 的 KV”，
+          而不是某个新的 attention 算子。
+        </p>
+      </div>
+
+      <div class="callout">
+        <span class="label">执行边界</span>
+        <p>
+          模型结构上，decoder 层只读 H20 派生的 KV。生产执行可以把 prefill 停在 encoder；
+          HF 的 reference forward 仍会跑完全部 40 层，因此“prefill 提前退出”属于执行层优化，
+          不是这份模型代码的 forward 行为。
+        </p>
+      </div>
+
+      <details class="source-appendix">
+<summary>展开：本章完整源码片段（7 块） <span class="tag">source appendix</span></summary>
+<div class="details-body">
+<p class="small muted">以下按 .md 原文章节顺序截取，仅保留 <span class="mono">python</span> / <span class="mono">json</span> 源码块；shape 与表格已在正文中整理。代码为原文照录，未做改写。</p>
+<div class="code-label"><span class="file">md § 11.1 · 11.1 官方 config 里的 CED 分层</span><span>19 lines · json</span></div>
+<pre><code class="language-json">{
+  &quot;num_hidden_layers&quot;: 40,
+  &quot;hidden_size&quot;: 5120,
+  &quot;num_attention_heads&quot;: 64,
+  &quot;num_key_value_heads&quot;: 1,
+  &quot;head_dim&quot;: 512,
+  &quot;sliding_window&quot;: 128,
+  &quot;compress_ratios&quot;: [
+    0, 0,
+    2, 2, 2, 2, 2, 2, 2, 2, 2, 2,
+    2, 2, 2, 2, 2, 2, 2, 2,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    1, 1, 1, 1, 1, 1, 1, 1, 1, 1,
+    0, 0, 0
+  ],
+  &quot;kv_source_layer_ids&quot;: [2, 8, 14, 20],
+  &quot;index_source_layer_ids&quot;: [2, 8, 14, 20, 24, 28, 32, 36],
+  &quot;index_topk&quot;: 512
+}</code></pre>
+<div class="code-label"><span class="file">md § 11.1 · 官方 HF 模型代码里的对应实现</span><span>9 lines · python</span></div>
+<pre><code class="language-python">class Compressor(nn.Module):
+    def __init__(self, args: ModelArgs, layer_id: int):
+        ...
+        self.wkv = Linear(args.dim, head_dim, ...)
+
+    def forward(self, x: torch.Tensor, start_pos: int):
+        ...
+        if ratio == 1:  # one token per group
+            return self.norm(self.wkv(x))</code></pre>
+<div class="code-label"><span class="file">md § 11.1 · 官方 HF 模型代码里的对应实现</span><span>1 lines · python</span></div>
+<pre><code class="language-python">shared_attn.compress_kv</code></pre>
+<div class="code-label"><span class="file">md § 11.2 · 11.2 `ModelArgs` 对 KV 共享的定义</span><span>11 lines · python</span></div>
+<pre><code class="language-python">@dataclass
+class ModelArgs:
+    ...
+    # one entry per layer, MTP layers included:
+    # 0 = sliding window only, r = KV compressed r-to-1
+    compress_ratios: tuple[int, ...] = (0, 2, 2, 1, 1, 0)
+
+    # layers sharing a ratio also share one compressed KV and one indexer,
+    # produced by the first ... source layer
+    kv_source_layers: tuple[int, ...] = (1, 3)
+    index_source_layers: tuple[int, ...] = (1, 3)</code></pre>
+<div class="code-label"><span class="file">md § 11.3 · 11.3 `Attention` 的结构</span><span>22 lines · python</span></div>
+<pre><code class="language-python">class Attention(nn.Module):
+    def __init__(self, layer_id: int, args: ModelArgs):
+        ...
+        self.compress_ratio = args.compress_ratios[layer_id]
+        ...
+        self.is_kv_source = (
+            layer_id &lt; args.n_layers
+            and layer_id in args.kv_source_layers
+        )
+        self.is_index_source = (
+            layer_id &lt; args.n_layers
+            and layer_id in args.index_source_layers
+        )
+
+        self.compressor = None
+        self.indexer = None
+
+        if self.is_kv_source:
+            self.compressor = Compressor(args, layer_id)
+
+        if self.is_index_source:
+            self.indexer = Indexer(args, layer_id)</code></pre>
+<div class="code-label"><span class="file">md § 11.5 · 11.5 `_compress_kv` 的真实数据流</span><span>24 lines · python</span></div>
+<pre><code class="language-python">def _compress_kv(self, x, qr, start_pos, offset):
+    bsz, seqlen, _ = x.size()
+    ratio = self.compress_ratio
+    compress_len = (start_pos + seqlen) // ratio
+
+    latent = None
+    if self.is_kv_source:
+        latent = self.compressor(x, start_pos)
+        shared_attn.compress_kv = self.compress_kv_cache
+
+    # indexer 必须在写 cache 之前运行
+    idxs = self._compress_topk_idxs(
+        x, qr, latent, start_pos, offset, compress_len
+    )
+
+    if latent is not None:
+        ...
+        self.compress_kv_cache[
+            :bsz,
+            start_pos // ratio : start_pos // ratio + latent.size(1)
+        ] = latent
+
+    # consumer 读取 source 写下的 cache
+    return shared_attn.compress_kv[:bsz, :compress_len], idxs</code></pre>
+<div class="code-label"><span class="file">md § 11.6 · 11.6 `_compress_topk_idxs` 的共享</span><span>8 lines · python</span></div>
+<pre><code class="language-python">def _compress_topk_idxs(self, x, qr, latent, start_pos, offset, compress_len):
+    if not self.is_index_source:
+        return shared_attn.topk_idxs
+
+    ...
+    idxs = self.indexer(x, qr, latent, start_pos, offset)
+    shared_attn.topk_idxs = idxs
+    return idxs</code></pre>
+</div></details>
+    </section>
+
+    <!-- ============================================================ -->
+    <section id="compare">
+      <div class="section-head"><span class="snum">9</span><h2>两代架构对照</h2></div>
+      <p>把 YOCO-3B 与 V4.1-Flash 放在同一张表里，差异主要在“shared object”和“执行边界”。</p>
+
+      <p class="table-caption"><strong>表 7.</strong> YOCO-3B 与 V4.1-Flash CED 的结构对照。</p>
+      <div class="table-wrap">
+        <table>
+          <thead><tr><th>维度</th><th>YOCO-3B</th><th>V4.1-Flash CED</th></tr></thead>
+          <tbody>
+            <tr><td>层划分</td><td>13 self + 13 cross</td><td>20 encoder + 20 decoder</td></tr>
+            <tr><td>共享对象</td><td>K̂/V̂（一份）</td><td>H20 派生的 compressed KV</td></tr>
+            <tr><td>共享写入者</td><td>CrossDecoder 容器</td><td>layer20（最后一个 kv_source）</td></tr>
+            <tr><td>每层 Q</td><td>24 head × 128</td><td>64 head × 512</td></tr>
+            <tr><td>KV head</td><td>8</td><td>1</td></tr>
+            <tr><td>全局 cache</td><td class="num">[B,S_total,8,128]</td><td class="num">[B,S_total,512]（compressed）</td></tr>
+            <tr><td>局部 cache</td><td>gRet state / SWA window</td><td>window KV [B,128,512]</td></tr>
+            <tr><td>prefill 提前退出</td><td>代码支持 skip</td><td>生产执行支持；HF reference 不体现</td></tr>
+          </tbody>
+        </table>
+      </div>
+
+      <div class="callout">
+        <span class="label">一句话区分</span>
+        <p>
+          YOCO 是<strong>同一个 causal stack 内的 decoder-decoder 划分</strong>；
+          V4.1 CED 是<strong>以 H20 为边界的 causal encoder-decoder 划分</strong>。
+          两者在“source 写、consumer 读”的算子上同构，差别在角色与执行图。
+        </p>
+      </div>
+    </section>
+
+    <!-- ============================================================ -->
+    
+    <!-- ============================================================ -->
+    <section id="refs">
+      <div class="section-head"><span class="snum">10</span><h2>参考</h2></div>
+      <div class="grid-2">
+        <div class="card">
+          <div class="k">YOCO</div>
+          <h4>论文与原始代码</h4>
+          <p>
+            <a href="https://arxiv.org/abs/2405.05254" target="_blank" rel="noopener">arXiv:2405.05254</a><br>
+            <a href="https://github.com/microsoft/unilm/tree/master/YOCO" target="_blank" rel="noopener">microsoft/unilm/YOCO</a><br>
+            <span class="muted">NeurIPS 2024</span>
+          </p>
+        </div>
+        <div class="card">
+          <div class="k">V4.1-Flash</div>
+          <h4>模型与 reference code</h4>
+          <p>
+            <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017" target="_blank" rel="noopener">HF checkpoint</a><br>
+            <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/main/config.json" target="_blank" rel="noopener">config.json</a><br>
+            <a href="https://huggingface.co/deepseek-ai/DeepSeek-V4.1-Flash-1017/blob/main/inference/model.py" target="_blank" rel="noopener">inference/model.py</a>
+          </p>
+        </div>
+      </div>
+      <p class="small muted" style="margin-top:14px">
+        注：本页将长文中的源码与逐行解释放入可收缩区块；正文只保留张量形状、矩阵运算、
+        cache 所有权与论文/代码差异。
+      </p>
+    </section>
+  </main>
+</div>
+
+<footer class="footer">
+  <span>YOCO Tensor &amp; KV Cache · Technical Note</span>
+  <span>Built from <span class="mono">YOCO_tensor_shape_flow.md</span> · 2026-11</span>
+</footer>
+
+
+</body>
+</html>
